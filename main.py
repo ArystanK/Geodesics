@@ -32,7 +32,6 @@ class GeodesicSphere(QOpenGLWidget):
         glEnable(GL_COLOR_MATERIAL)
         glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
 
-        # Set up lighting
         glLightfv(GL_LIGHT0, GL_POSITION, [5.0, 5.0, 5.0, 1.0])
         glLightfv(GL_LIGHT0, GL_AMBIENT, [0.3, 0.3, 0.3, 1.0])
         glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.8, 0.8, 0.8, 1.0])
@@ -48,23 +47,18 @@ class GeodesicSphere(QOpenGLWidget):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
 
-        # Position camera
         glTranslatef(0.0, 0.0, -4.0)
 
-        # Apply rotations in ZYX order (or YXZ depending on what feels natural)
-        # For intuitive control: Z first, then Y, then X
         glRotatef(self.rotation_z, 0, 0, 1)  # Z-axis rotation
         glRotatef(self.rotation_y, 0, 1, 0)  # Y-axis rotation
         glRotatef(self.rotation_x, 1, 0, 0)  # X-axis rotation
 
-        # Draw sphere with wireframe
         glColor3f(0.3, 0.5, 0.8)
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
         quadric = gluNewQuadric()
         gluSphere(quadric, self.sphere_radius, 50, 50)
         gluDeleteQuadric(quadric)
 
-        # Draw wireframe overlay
         glDisable(GL_LIGHTING)
         glColor3f(0.2, 0.3, 0.4)
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
@@ -74,7 +68,6 @@ class GeodesicSphere(QOpenGLWidget):
         gluDeleteQuadric(quadric)
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
-        # Draw geodesics
         glLineWidth(3.0)
         glColor3f(1.0, 0.8, 0.0)
         for geodesic in self.geodesics:
@@ -83,7 +76,6 @@ class GeodesicSphere(QOpenGLWidget):
                 glVertex3fv(point)
             glEnd()
 
-        # Draw selected points
         glPointSize(10.0)
         glColor3f(1.0, 0.2, 0.2)
         glBegin(GL_POINTS)
