@@ -138,6 +138,57 @@ class GeodesicSphere(QOpenGLWidget):
         return True, f"Point added at Longitude: {lon}°, Latitude: {lat}°\nCartesian: ({x:.3f}, {y:.3f}, {z:.3f})"
 
     def compute_geodesic(self, p1, p2, num_points=100):
+        """
+        If $|d + 1| < \epsilon$ (antipodal points), we need to choose a rotation axis perpendicular to $\mathbf{u}_1$:
+        \[
+        \text{If } |u_{1x}| > \epsilon \text{ or } |u_{1y}| > \epsilon: \quad \mathbf{a} = \mathbf{u}_1 \times \mathbf{e}_z
+        \]
+        \[
+        \text{Else:} \quad \mathbf{a} = \mathbf{u}_1 \times \mathbf{e}_x
+        \]
+        where $\mathbf{e}_z = (0,0,1)$, $\mathbf{e}_x = (1,0,0)$.
+
+        Normalize the axis:
+        \[
+        \mathbf{\hat{a}} = \frac{\mathbf{a}}{\|\mathbf{a}\|}
+        \]
+
+        For $i = 0, 1, \ldots, N-1$ where $N = \text{num\_points}$:
+        \[
+        t = \frac{i}{N-1}, \quad \varphi = t\pi
+        \]
+
+        Apply Rodrigues' rotation formula:
+        \[
+        \mathbf{q}(t) = \mathbf{u}_1 \cos\varphi + (\mathbf{\hat{a}} \times \mathbf{u}_1) \sin\varphi + \mathbf{\hat{a}}(\mathbf{\hat{a}} \cdot \mathbf{u}_1)(1 - \cos\varphi)
+        \]
+
+        Scale to sphere radius:
+        \[
+        \mathbf{r}(t) = R \cdot \mathbf{q}(t)
+        \]
+
+        For non-antipodal points, use spherical linear interpolation (slerp).
+
+        If $\theta > \epsilon$:
+        \[
+        \mathbf{q}(t) = \frac{\sin((1-t)\theta)}{\sin\theta} \mathbf{u}_1 + \frac{\sin(t\theta)}{\sin\theta} \mathbf{u}_2
+        \]
+
+        If $\theta \leq \epsilon$ (points are nearly identical):
+        \[
+        \mathbf{q}(t) = (1-t)\mathbf{u}_1 + t\mathbf{u}_2
+        \]
+
+        Normalize and scale:
+        \[
+        \mathbf{r}(t) =
+        \begin{cases}
+        R \cdot \frac{\mathbf{q}(t)}{\|\mathbf{q}(t)\|} & \text{if } \|\mathbf{q}(t)\| > \epsilon \\
+        R \cdot (\epsilon, 0, 0) & \text{otherwise}
+        \end{cases}
+        \]
+        """
         p1 = np.array(p1) / np.linalg.norm(p1)
         p2 = np.array(p2) / np.linalg.norm(p2)
 
