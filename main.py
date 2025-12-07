@@ -1,3 +1,4 @@
+import math
 import sys
 
 import numpy as np
@@ -5,16 +6,19 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QOpenGLWidget,
-                             QVBoxLayout, QWidget, QLabel, QLineEdit,
-                             QPushButton, QHBoxLayout, QMessageBox,
-                             QGroupBox, QGridLayout)
+                             QVBoxLayout, QWidget, QLabel, QPushButton, QHBoxLayout, QMessageBox,
+                             QGroupBox, QGridLayout, QDoubleSpinBox)
 
 
 class GeodesicSphere(QOpenGLWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.initial_rotation_y = 0
+        self.initial_rotation_x = 0
+        self.initial_rotation_z = 0
         self.rotation_x = 0
         self.rotation_y = 0
+        self.rotation_z = 0  # Added Z-axis rotation
         self.last_pos = None
         self.points = []
         self.geodesics = []
@@ -46,8 +50,12 @@ class GeodesicSphere(QOpenGLWidget):
 
         # Position camera
         glTranslatef(0.0, 0.0, -4.0)
-        glRotatef(self.rotation_x, 1, 0, 0)
-        glRotatef(self.rotation_y, 0, 1, 0)
+
+        # Apply rotations in ZYX order (or YXZ depending on what feels natural)
+        # For intuitive control: Z first, then Y, then X
+        glRotatef(self.rotation_z, 0, 0, 1)  # Z-axis rotation
+        glRotatef(self.rotation_y, 0, 1, 0)  # Y-axis rotation
+        glRotatef(self.rotation_x, 1, 0, 0)  # X-axis rotation
 
         # Draw sphere with wireframe
         glColor3f(0.3, 0.5, 0.8)
@@ -90,34 +98,44 @@ class GeodesicSphere(QOpenGLWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.RightButton:
             self.last_pos = event.pos()
+            self.initial_rotation_z = self.rotation_z
+
+        elif event.button() == Qt.LeftButton:
+            self.last_pos = event.pos()
+
+            self.initial_rotation_x = self.rotation_x
+            self.initial_rotation_y = self.rotation_y
 
     def mouseMoveEvent(self, event):
-        if event.buttons() & Qt.RightButton and self.last_pos:
-            dx = event.x() - self.last_pos.x()
-            dy = event.y() - self.last_pos.y()
+        if self.last_pos is None:
+            return
 
-            self.rotation_y += dx * 0.5
-            self.rotation_x += dy * 0.5
+        dx = event.x() - self.last_pos.x()
+        dy = event.y() - self.last_pos.y()
 
-            self.last_pos = event.pos()
+        if event.buttons() & Qt.RightButton:
+            self.rotation_z = self.initial_rotation_z + dx * 0.5
             self.update()
 
-    def add_point_from_coordinates(self, x, y, z):
-        # Normalize the point to lie on the sphere surface
-        vector = np.array([x, y, z])
-        length = np.linalg.norm(vector)
+        elif event.buttons() & Qt.LeftButton:
+            self.rotation_x = self.initial_rotation_x + dy * 0.5
+            self.rotation_y = self.initial_rotation_y + dx * 0.5
+            self.update()
 
-        if length == 0:
-            return False, "Cannot add point at origin (0,0,0)"
+    def mouseReleaseEvent(self, event):
+        self.last_pos = None
 
-        # Normalize to unit sphere
-        normalized = vector / length
+    def add_point_from_coordinates(self, lon, lat):
+        lon_rad = math.radians(lon)
+        lat_rad = math.radians(lat)
 
-        # Scale by sphere radius
-        point = normalized * self.sphere_radius
-        self.points.append(tuple(point))
+        x = math.cos(lat_rad) * math.cos(lon_rad) * self.sphere_radius
+        y = math.cos(lat_rad) * math.sin(lon_rad) * self.sphere_radius
+        z = math.sin(lat_rad) * self.sphere_radius
 
-        # If we have at least 2 points, create geodesics between consecutive points
+        point = (x, y, z)
+        self.points.append(point)
+
         if len(self.points) >= 2:
             p1 = self.points[-2]
             p2 = self.points[-1]
@@ -125,31 +143,22 @@ class GeodesicSphere(QOpenGLWidget):
             self.geodesics.append(geodesic)
 
         self.update()
-        return True, f"Point added at ({point[0]:.3f}, {point[1]:.3f}, {point[2]:.3f})"
+        return True, f"Point added at Longitude: {lon}°, Latitude: {lat}°\nCartesian: ({x:.3f}, {y:.3f}, {z:.3f})"
 
     def compute_geodesic(self, p1, p2, num_points=100):
-        # Normalize points
         p1 = np.array(p1) / np.linalg.norm(p1)
         p2 = np.array(p2) / np.linalg.norm(p2)
 
-        # Compute angle between points
         dot = np.clip(np.dot(p1, p2), -1.0, 1.0)
         angle = np.arccos(dot)
 
-        # Handle antipodal points (opposite sides of sphere)
-        # For antipodal points, there are infinite great circles
-        # We choose one by rotating around an arbitrary axis
         if abs(dot + 1.0) < 1e-10:  # Antipodal points (dot ≈ -1)
-            # Find an arbitrary perpendicular axis
             if abs(p1[0]) > 1e-10 or abs(p1[1]) > 1e-10:
-                # Use cross product with z-axis
                 axis = np.cross(p1, [0, 0, 1])
             else:
-                # If p1 is aligned with z-axis, use cross product with x-axis
                 axis = np.cross(p1, [1, 0, 0])
             axis = axis / np.linalg.norm(axis)
 
-            # Generate points by rotating p1 around the axis
             geodesic = []
             for i in range(num_points):
                 t = i / (num_points - 1)
@@ -167,7 +176,6 @@ class GeodesicSphere(QOpenGLWidget):
                 geodesic.append(point)
             return geodesic
 
-        # Generate points along the geodesic using spherical interpolation
         geodesic = []
         for i in range(num_points):
             t = i / (num_points - 1)
@@ -181,12 +189,10 @@ class GeodesicSphere(QOpenGLWidget):
                 # Points are very close, use linear interpolation
                 point = (1 - t) * p1 + t * p2
 
-            # Only normalize if the vector has non-zero length
             norm = np.linalg.norm(point)
             if norm > 1e-10:
                 point = point / norm * self.sphere_radius
             else:
-                # Fallback: use a small epsilon to avoid division by zero
                 point = np.array([1e-10, 0, 0]) * self.sphere_radius
 
             geodesic.append(point)
@@ -199,44 +205,32 @@ class GeodesicSphere(QOpenGLWidget):
         self.update()
 
 
-def parse_coordinates(text):
-    text = text.strip().replace('(', '').replace(')', '')
-
-    parts = text.split(',')
-
-    if len(parts) != 3:
-        return None, "Invalid format. Use: x,y,z"
-
-    try:
-        x = float(parts[0].strip())
-        y = float(parts[1].strip())
-        z = float(parts[2].strip())
-        return (x, y, z), None
-    except ValueError:
-        return None, "Invalid numbers. Use numeric values"
-
-
 class ControlPanel(QWidget):
     def __init__(self, gl_widget, parent=None):
         super().__init__(parent)
-        self.add_button = QPushButton("Add Point")
-        self.coord_input = QLineEdit()
         self.clear_button = QPushButton("Clear All Points")
+        self.rotation_label = QLabel("Rotation: X=0°, Y=0°, Z=0°")
+        self.reset_rotation_button = QPushButton("Reset Rotation")
         self.status_label = QLabel("Ready")
+        self.add_button = QPushButton("Add Point")
+        self.lat_input = QDoubleSpinBox()
+        self.lon_input = QDoubleSpinBox()
         self.gl_widget = gl_widget
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
 
-        # Instructions group (compact)
-        instructions_group = QGroupBox("Instructions")
+        instructions_group = QGroupBox("Controls & Instructions")
         instructions_layout = QVBoxLayout()
 
         instructions = QLabel(
-            "Right-click and drag to rotate sphere\n"
-            "Enter coordinates as x,y,z\n"
-            "Example: 0,0,1 for North Pole"
+            "Mouse Controls:\n"
+            "• Right drag: Rotate around Z-axis (roll)\n"
+            "• Left drag: Rotate around X/Y axes\n\n"
+            "Coordinates:\n"
+            "Longitude: -180° to 180° (0° = Prime Meridian)\n"
+            "Latitude: -90° to 90° (0° = Equator)"
         )
         instructions.setWordWrap(True)
         instructions.setMaximumWidth(250)
@@ -244,49 +238,61 @@ class ControlPanel(QWidget):
         instructions_group.setLayout(instructions_layout)
         layout.addWidget(instructions_group)
 
-        # Coordinate input group
-        input_group = QGroupBox("Add Point")
+        input_group = QGroupBox("Add Point (Geographic Coordinates)")
         input_layout = QVBoxLayout()
 
-        # Coordinate input
-        coord_layout = QHBoxLayout()
-        coord_layout.addWidget(QLabel("Coords:"))
+        lon_layout = QHBoxLayout()
+        lon_layout.addWidget(QLabel("Longitude:"))
+        self.lon_input.setRange(-180.0, 180.0)
+        self.lon_input.setDecimals(2)
+        self.lon_input.setSingleStep(1.0)
+        self.lon_input.setValue(0.0)
+        self.lon_input.setSuffix("°")
+        self.lon_input.setMaximumWidth(120)
+        lon_layout.addWidget(self.lon_input)
+        lon_layout.addStretch()
+        input_layout.addLayout(lon_layout)
 
-        self.coord_input.setPlaceholderText("x,y,z")
-        self.coord_input.setText("0,0,1")
-        self.coord_input.setMaximumWidth(150)
-        coord_layout.addWidget(self.coord_input)
-        input_layout.addLayout(coord_layout)
+        lat_layout = QHBoxLayout()
+        lat_layout.addWidget(QLabel("Latitude:"))
+        self.lat_input.setRange(-90.0, 90.0)
+        self.lat_input.setDecimals(2)
+        self.lat_input.setSingleStep(1.0)
+        self.lat_input.setValue(0.0)
+        self.lat_input.setSuffix("°")
+        self.lat_input.setMaximumWidth(120)
+        lat_layout.addWidget(self.lat_input)
+        lat_layout.addStretch()
+        input_layout.addLayout(lat_layout)
 
-        # Add button
         self.add_button.clicked.connect(self.add_point)
         input_layout.addWidget(self.add_button)
 
-        # Status label
-        self.status_label.setMaximumHeight(40)
+        self.status_label.setMaximumHeight(60)
+        self.status_label.setWordWrap(True)
         input_layout.addWidget(self.status_label)
 
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
 
-        # Preset buttons group
-        preset_group = QGroupBox("Preset Points")
+        preset_group = QGroupBox("Preset Locations")
         preset_layout = QGridLayout()
 
+        # lon, lat
         presets = [
-            ("North Pole", "0,0,1"),
-            ("South Pole", "0,0,-1"),
-            ("Equator X+", "1,0,0"),
-            ("Equator X-", "-1,0,0"),
-            ("Equator Y+", "0,1,0"),
-            ("Equator Y-", "0,-1,0"),
-            ("Front", "0,0,1"),
-            ("Back", "0,0,-1")
+            ("North Pole", (0.0, 90.0)),
+            ("South Pole", (0.0, -90.0)),
+            ("(0,0)", (0.0, 0.0)),
+            ("Boston", (-71.05, 42.4)),
+            ("Tokyo", (139.7, 35.7)),
+            ("Astana", (71.4272, 51.1655)),
+            ("Bucharest", (26.1025, 44.4268)),
+            ("Washington DC", (-77.0369, 38.9072))
         ]
 
-        for i, (preset_name, coords) in enumerate(presets):
-            btn = QPushButton(preset_name)
-            btn.setMaximumWidth(100)
+        for i, (location_name, coords) in enumerate(presets):
+            btn = QPushButton(location_name)
+            btn.setMaximumWidth(110)
             btn.clicked.connect(lambda checked, c=coords: self.set_preset_coords(c))
             row = i // 2
             col = i % 2
@@ -295,31 +301,36 @@ class ControlPanel(QWidget):
         preset_group.setLayout(preset_layout)
         layout.addWidget(preset_group)
 
+        rotation_group = QGroupBox("Rotation Controls")
+        rotation_layout = QVBoxLayout()
+
+        self.reset_rotation_button.clicked.connect(self.reset_rotation)
+        rotation_layout.addWidget(self.reset_rotation_button)
+
+        rotation_layout.addWidget(self.rotation_label)
+
+        rotation_group.setLayout(rotation_layout)
+        layout.addWidget(rotation_group)
+
         self.clear_button.clicked.connect(self.clear_points)
         layout.addWidget(self.clear_button)
 
-        # Add stretch to push everything to top
         layout.addStretch(1)
 
     def set_preset_coords(self, coords):
-        self.coord_input.setText(coords)
+        lon, lat = coords
+        self.lon_input.setValue(lon)
+        self.lat_input.setValue(lat)
 
     def add_point(self):
-        text = self.coord_input.text()
-        if not text:
-            QMessageBox.warning(self, "Input Error", "Please enter coordinates")
-            return
+        lon = self.lon_input.value()
+        lat = self.lat_input.value()
 
-        coords, error_data = parse_coordinates(text)
-        if error_data:
-            QMessageBox.warning(self, "Input Error", error_data)
-            return
-
-        x, y, z = coords
-        success, message = self.gl_widget.add_point_from_coordinates(x, y, z)
+        success, message = self.gl_widget.add_point_from_coordinates(lon, lat)
 
         if success:
             self.status_label.setText(message)
+            self.update_rotation_display()
         else:
             QMessageBox.warning(self, "Error", message)
 
@@ -327,26 +338,34 @@ class ControlPanel(QWidget):
         self.gl_widget.clear_all_points()
         self.status_label.setText("All points cleared")
 
+    def reset_rotation(self):
+        self.gl_widget.rotation_x = 0
+        self.gl_widget.rotation_y = 0
+        self.gl_widget.rotation_z = 0
+        self.gl_widget.update()
+        self.update_rotation_display()
+        self.status_label.setText("Rotation reset to initial position")
+
+    def update_rotation_display(self):
+        rotation_text = f"Rotation: X={self.gl_widget.rotation_x:.1f}°, Y={self.gl_widget.rotation_y:.1f}°, Z={self.gl_widget.rotation_z:.1f}°"
+        self.rotation_label.setText(rotation_text)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Geodesic Sphere Visualizer")
-        self.setGeometry(100, 100, 900, 600)
+        self.setWindowTitle("Geodesic Sphere Visualizer - Full 3D Rotation")
+        self.setGeometry(100, 100, 950, 600)
 
-        # Create central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
 
-        # Create OpenGL widget
         self.gl_widget = GeodesicSphere()
 
-        # Create control panel
         self.control_panel = ControlPanel(self.gl_widget)
-        self.control_panel.setMaximumWidth(300)
+        self.control_panel.setMaximumWidth(320)
 
-        # Add widgets to main layout
         main_layout.addWidget(self.control_panel)
         main_layout.addWidget(self.gl_widget, 1)  # Give sphere most of the space
 
@@ -354,6 +373,8 @@ class MainWindow(QMainWindow):
         if event.key() == Qt.Key_C:
             self.gl_widget.clear_all_points()
             self.control_panel.status_label.setText("All points cleared")
+        elif event.key() == Qt.Key_R:
+            self.control_panel.reset_rotation()
         elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
             self.control_panel.add_point()
         elif event.key() == Qt.Key_Escape:
