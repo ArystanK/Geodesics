@@ -397,7 +397,7 @@ class ControlPanel(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Geodesic Sphere Visualizer - Full 3D Rotation")
+        self.setWindowTitle("Geodesic Sphere Visualizer")
         self.setGeometry(100, 100, 950, 600)
 
         central_widget = QWidget()
